@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+*.pyo
+.DS_Store
+
+# Данные и чекпоинты (слишком большие для git)
+checkpoints/
+runs/
+figures/
+analysis/
+report/
+
+# Временные файлы
+*.log
+*.tmp
