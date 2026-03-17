@@ -1,69 +1,61 @@
 # DualPolMAFUformerMIL — SAR Oil Spill Detection
 
 Модель для обнаружения и сегментации нефтяных разливов по спутниковым снимкам Sentinel-1 SAR.
+Поддержка распределённого обучения на нескольких GPU через **PyTorch DDP** (DistributedDataParallel).
 
 ## Архитектура
 
-**DualPolMAFUformerMIL** — гибридная модель с:
-- Двумя параллельными стемами для VV и VH каналов
-- Поляриметрическим фьюжн-блоком (gated attention)
-- Backbone ConvNeXt-Small с bottleneck (Window Self-Attention)
-- U-образным декодером с SAFB (Skip Attention Fusion Blocks) и **deep supervision**
-- **Multi-scale** сегментационной головой
-- MIL (Multiple Instance Learning) классификатором на Transformer-encoder
+**DualPolMAFUformerMIL** (72.24M параметров) — гибридная модель:
 
-```
-VV ──→ Stem ──┐
-              ├──→ PolarimetricFusion ──→ ConvNeXt Backbone ──→ Bottleneck
-VH ──→ Stem ──┘                                                     │
-                                                            U-Decoder + SAFB
-                                                                    │
-                                             ┌──────────────────────┤
-                                      SegHead (multi-scale)   TileEmbedding
-                                             │                      │
-                                        Mask logits      MIL BagClassifier
-                                                                    │
-                                                           Class logits (3)
-```
+![Architecture](architecture.png)
+
+| Блок | Описание |
+|------|----------|
+| **Dual-pol Stems** | Отдельные Conv3x3 stride2 для VV и VH (1→32→48ch) |
+| **Polarimetric Fusion** | Gated attention: gate = σ(conv(cat(Fvv, Fvh, \|Fvv−Fvh\|))), 48→96ch |
+| **Backbone** | ConvNeXt-Small (timm), channels [96, 192, 384, 768] |
+| **Bottleneck** | 2× Window Self-Attention (8 heads, win 7) + DW-Conv MLP |
+| **Decoder** | 3-level SAFB (gated skip fusion) + deep supervision [384, 192, 96] |
+| **Seg Head** | Multi-scale fusion + Conv3x3 → GELU → Conv1x1 → 1ch, upsample 4× |
+| **Tile Embedding** | GeM(stage4) + GAP(decoder) + mask_stats → MLP → 512d |
+| **MIL Classifier** | 2-layer Transformer (512d, 8h) + CLS token → MLP → 3 classes |
 
 ## Датасет
 
-[Zenodo Sentinel-1 SAR Oil Spill Dataset](https://zenodo.org/records/8346860)
+[Zenodo Sentinel-1 SAR Oil Spill Dataset](https://zenodo.org/records/8346860) (Parts I–III)
 
-| Набор | Класс | Изображений |
-|-------|-------|-------------|
-| Train/Val | oil | 1200 |
-| Train/Val | lookalike | 685 |
-| Train/Val | no_oil | 685 |
-| Test | oil / lookalike / no_oil | 150 × 3 |
+| Набор | oil | lookalike | no_oil | Итого |
+|-------|-----|-----------|--------|-------|
+| Train/Val | 1200 | 685 | 685 | 2570 |
+| Test | 150 | 150 | 150 | 450 |
 
-- Размер снимков: **2048 × 2048 × 2** (VV, VH), Sigma0 в дБ
-- Маски: бинарные 2048 × 2048
-- Медианная доля нефти: **1.76%** пикселей (сильный дисбаланс)
+- Снимки: **2048 × 2048 × 2** (VV + VH), Sigma0 в дБ, GeoTIFF
+- Маски: бинарные 2048 × 2048 (oil class), пустые (lookalike/no_oil)
+- Медианная доля нефти: **1.76%** пикселей
 
 ## Структура проекта
 
 ```
 oil_detection/
-├── config.py           # Конфигурация (dataclasses)
-├── dataset.py          # Dataset, тайлинг, SAR аугментации, copy-paste
-├── losses.py           # FocalLoss + DiceLoss + BoundaryLoss + OHEM
-├── metrics.py          # macro-F1, IoU, Dice, confusion matrix, FP area
-├── train.py            # Training loop (AMP, EMA, grad accumulation)
-├── inference.py        # Sliding-window inference + TTA
-├── utils.py            # Seed, EMA, cosine scheduler, checkpoints
+├── config.py              # Конфигурация (dataclasses)
+├── dataset.py             # Dataset, тайлинг, SAR-аугментации, copy-paste
+├── losses.py              # FocalLoss + DiceLoss + BoundaryLoss + OHEM + DeepSupervision
+├── metrics.py             # macro-F1, IoU, Dice, confusion matrix, FP area
+├── train.py               # Training loop (DDP, AMP, EMA, grad accumulation)
+├── inference.py           # Sliding-window inference + TTA
+├── utils.py               # Seed, EMA, cosine scheduler, checkpoints
 ├── model/
-│   ├── stems.py        # Dual-pol shallow stems
-│   ├── fusion.py       # Polarimetric fusion block
-│   ├── backbone.py     # ConvNeXt backbone (timm)
-│   ├── bottleneck.py   # Window Self-Attention + DW-Conv MLP
-│   ├── decoder.py      # U-Decoder + SAFB + deep supervision
-│   ├── heads.py        # SegHead (multi-scale) + TileEmbed + MIL classifier
-│   └── dualpol.py      # Полная сборка модели
-├── analyze_data.py     # Анализ датасета (статистика, графики)
-├── visualize_data.py   # Визуализация примеров
-├── generate_report.py  # Генерация MD-отчёта с графиками
-└── md_to_pdf.py        # Конвертация отчёта в PDF
+│   ├── stems.py           # Dual-pol shallow stems (VV / VH)
+│   ├── fusion.py          # Polarimetric gated fusion
+│   ├── backbone.py        # ConvNeXt backbone (timm)
+│   ├── bottleneck.py      # Window Self-Attention + DW-Conv MLP
+│   ├── decoder.py         # U-Decoder + SAFB + deep supervision
+│   ├── heads.py           # Multi-scale SegHead + TileEmbed + MIL classifier
+│   └── dualpol.py         # Полная сборка DualPolMAFUformerMIL
+├── analyze_data.py        # Анализ датасета (3 класса, SAR-статистика)
+├── visualize_data.py      # Визуализация примеров
+├── generate_report.py     # Генерация MD/PDF отчёта с графиками
+└── md_to_pdf.py           # MD → PDF конвертер
 ```
 
 ## Установка
@@ -74,99 +66,149 @@ pip install torch torchvision timm rasterio numpy pandas matplotlib seaborn scip
 
 ## Подготовка данных
 
+Скачать 3 части с Zenodo и распаковать:
+
 ```
-/media/knru/DataLake/OIL/
-├── Oil/                # train/val нефть (1200 снимков)
+$DATA_DIR/
+├── Oil/              # Part I — train/val нефть (1200)
 ├── Mask_oil/
-├── Lookalike/          # train/val двойники (685)
+├── Lookalike/        # Part II — train/val двойники (685)
 ├── Mask_lookalike/
-├── No_oil/             # train/val без нефти (685)
+├── No_oil/           # Part II — train/val без нефти (685)
 ├── Mask_no_oil/
-├── Images/             # test (150 × 3 классов)
+├── Images/           # Part III — тест (150 × 3)
 │   ├── Oil/
 │   ├── Lookalike/
 │   └── No oil/
-└── Mask/               # test маски
+└── Mask/
     ├── Oil/
     ├── Lookalike/
     └── No oil/
 ```
 
+Путь к данным задаётся в `config.py` → `DataConfig.data_dir`.
+
 ## Обучение
 
-```bash
-# Полное обучение (150 эпох)
-python3 train.py
+### Single GPU
 
-# На GPU с ограниченной VRAM (< 24 GB)
+```bash
+# Полное обучение (150 эпох, batch=1, effective batch=8)
 python3 train.py --batch-size 1 --grad-accum 8
 
-# С меньшим backbone
+# С лёгким backbone (меньше VRAM)
 python3 train.py --backbone convnext_tiny --batch-size 1 --grad-accum 4
 
 # Продолжить с чекпоинта
 python3 train.py --resume checkpoints/best.pt
 ```
 
-Чекпоинты сохраняются в `checkpoints/`, логи в `runs/`.
+### Multi-GPU (DDP)
+
+```bash
+# 2 GPU на одной машине
+torchrun --nproc_per_node=2 train.py --batch-size 1 --grad-accum 4 --sync-bn
+
+# 4 GPU
+torchrun --nproc_per_node=4 train.py --batch-size 1 --grad-accum 2 --sync-bn
+
+# 2 узла × 4 GPU
+torchrun --nnodes=2 --nproc_per_node=4 \
+         --rdzv_id=42 --rdzv_backend=c10d \
+         --rdzv_endpoint=MASTER_HOST:29500 \
+         train.py --batch-size 1 --grad-accum 2 --sync-bn
+```
+
+| Параметр | Описание |
+|----------|----------|
+| `--batch-size` | Bags per GPU per step |
+| `--grad-accum` | Gradient accumulation steps |
+| `--sync-bn` | Конвертировать BatchNorm → SyncBatchNorm |
+| `--no-amp` | Отключить mixed precision |
+
+**Effective batch** = batch_size × grad_accum × num_gpus.
+LR масштабируется линейно: `lr × num_gpus`.
+
+### DDP-особенности
+
+| Компонент | Реализация |
+|-----------|------------|
+| Инициализация | `torchrun` env vars (RANK, WORLD_SIZE) → `nccl` backend |
+| Сэмплер | `ClassBalancedDistributedSampler` — балансировка + DDP-sharding |
+| Grad sync | `model.no_sync()` при накоплении, sync на последнем шаге |
+| EMA | Только rank 0 (веса синхронизированы через DDP allreduce) |
+| Normalizer | Fit на rank 0, `dist.barrier()` → остальные загружают JSON |
+| SyncBatchNorm | `--sync-bn` для корректной статистики BN на multi-GPU |
+| Валидация | Rank 0, полный val set, EMA-модель |
+| Checkpoints | Сохраняет `raw_model` (без DDP wrapper) на rank 0 |
+| Loss aggregation | `dist.all_reduce` средних loss-значений по GPU |
+
+Чекпоинты → `checkpoints/`, логи → `runs/`.
 
 ## Инференс
 
 ```bash
-# Один файл
-python3 inference.py input.tif --checkpoint checkpoints/best.pt --output-dir predictions/
+# Один файл (с TTA — flips h/v/hv)
+python3 inference.py input.tif --checkpoint checkpoints/best.pt
 
-# Папка с файлами (с TTA)
-python3 inference.py /path/to/images/ --checkpoint checkpoints/best.pt
+# Папка
+python3 inference.py /path/to/images/ --checkpoint checkpoints/best.pt --output-dir predictions/
 
-# Без TTA (быстрее)
+# Без TTA (быстрее, 4×)
 python3 inference.py input.tif --checkpoint checkpoints/best.pt --no-tta
+
+# Кастомный stride
+python3 inference.py input.tif --checkpoint checkpoints/best.pt --stride 256
 ```
 
-## Анализ датасета
+Sliding window: окно 512, stride 384 (default), overlap merge (усреднение).
 
-```bash
-# Полный анализ + графики
-python3 analyze_data.py
+## SAR-аугментации
 
-# Только маски (быстрее)
-python3 analyze_data.py --no-sar
+| Аугментация | Описание | P |
+|-------------|----------|---|
+| Rot90 + Flips | Повороты 0°/90°/180°/270° + H/V flip | 100% |
+| Speckle noise | Аддитивный Gamma(L=4) шум (SAR L-looks модель) | 50% |
+| Radiometric | Случайный сдвиг ±0.3σ + масштаб ±15% (разные условия съёмки) | 50% |
+| Gaussian noise | Аддитивный N(0, 0.1) | 30% |
+| Copy-paste | Вставка 3 нефтяных патчей (64–256px) с Гауссовым blending | 50% (oil only) |
+| Force oil crop | Замена тайла с <1% нефти на кроп с ≥1% | 50% (oil only) |
 
-# Генерация отчёта (MD + PDF)
-python3 generate_report.py
+## Loss
+
 ```
+L_total = L_cls + 0.7 × L_seg + 0.4 × L_ds
+
+L_cls = CrossEntropy(label_smoothing=0.05, weights=[0.71, 1.25, 1.25])
+L_seg = 0.5 × FocalLoss(γ=2, α=0.75, OHEM 70%)
+      + 0.3 × DiceLoss
+      + 0.2 × BoundaryLoss (Laplacian edge weighting ×10)
+L_ds  = Σ wᵢ × SegLoss(auxᵢ)  [w = 0.25, 0.5, 1.0]
+```
+
+## Метрики
+
+- **Классификация**: macro-F1, per-class recall/precision, accuracy, confusion matrix
+- **Сегментация**: oil IoU, oil Dice
+- **Negative control**: false positive oil area на lookalike/no_oil
 
 ## Ключевые решения
 
 | Проблема | Решение |
 |----------|---------|
-| Нефть ~2% площади | Focal loss (γ=2, α=0.75) + Dice + Boundary loss + OHEM |
-| Мелкие пятна | Deep supervision + multi-scale seg head |
-| Дисбаланс классов | Class weights + ClassBalancedSampler + lookalike oversampling |
-| Малое количество нефти | Force oil crop (50%) + copy-paste аугментация |
-| SAR-специфика | Speckle noise + radiometric shift/scale аугментации |
-| Lookalike hard negatives | 1.5× oversampling lookalike в сэмплере |
-| Стабильность обучения | EMA (0.999) + gradient accumulation (eff batch 8–16) |
+| Нефть ~2% площади | Focal (α=0.75) + Dice + Boundary loss + OHEM top 70% |
+| Мелкие пятна | Deep supervision (3 уровня) + multi-scale seg head |
+| Дисбаланс классов | Class weights [0.71, 1.25, 1.25] + balanced sampler |
+| Мало нефтяных пикселей | Force oil crop 50% + copy-paste аугментация |
+| SAR-специфика | Dual-pol stems + polaimetric fusion + speckle/radio augmentations |
+| Lookalike hard negatives | 1.5× oversampling в сэмплере |
+| Стабильность | EMA 0.999 + grad accumulation + cosine LR + warmup 5 эпох |
+| Масштабирование | DDP + SyncBN + linear LR scaling + ClassBalancedDistributedSampler |
 
-## Loss
+## Анализ датасета
 
+```bash
+python3 analyze_data.py          # Полный анализ всех 3 классов + SAR
+python3 analyze_data.py --no-sar # Только маски (быстрее)
+python3 generate_report.py       # MD + PDF отчёт с графиками
 ```
-L_total = L_cls + 0.7 * L_seg + 0.4 * L_ds
-
-L_cls = CrossEntropy(label_smoothing=0.05, class_weights=[0.71, 1.25, 1.25])
-L_seg = 0.5 * FocalLoss + 0.3 * DiceLoss + 0.2 * BoundaryLoss  (+ OHEM top 70%)
-L_ds  = weighted sum of auxiliary seg losses (deep supervision)
-```
-
-## Метрики
-
-- **Классификация**: macro-F1, per-class recall, accuracy, confusion matrix
-- **Сегментация**: oil IoU, oil Dice
-- **Negative control**: FP oil area на lookalike/no_oil изображениях
-
-## Параметры модели
-
-- **72.24M** параметров (ConvNeXt-Small backbone)
-- Вход тайла: 512 × 512 × 2 (VV + VH)
-- Bag: 16 тайлов на изображение (4 × 4 сетка)
-- Sliding window инференс: окно 512, stride 384
