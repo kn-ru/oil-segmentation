@@ -14,6 +14,7 @@ Training loop для DualPolMAFUformerMIL с поддержкой DDP.
 
 import os
 import argparse
+import contextlib
 import time
 
 import torch
@@ -167,9 +168,7 @@ def train_one_epoch(
         sync_ctx = (
             model.no_sync()
             if (is_ddp and not is_sync_step)
-            else torch.contextlib.nullcontext()
-            if not is_ddp
-            else torch.contextlib.nullcontext()
+            else contextlib.nullcontext()
         )
 
         with sync_ctx:
@@ -359,15 +358,13 @@ def main():
             if rank != 0:
                 normalizer.load(norm_path)
 
-    # Oil patch bank — только на rank 0 строим, остальным не нужен (копируется в память)
-    oil_patch_bank = None
-    if rank == 0:
-        log("Building oil patch bank for copy-paste augmentation...")
-        oil_train_entries = [e for e in train_entries if e["class_name"] == "oil"]
-        oil_patch_bank = build_oil_patch_bank(
-            oil_train_entries, normalizer, max_images=100, patches_per_image=5)
-        n_patches = len(oil_patch_bank["vv"]) if oil_patch_bank else 0
-        log(f"  Patch bank: {n_patches} patches from oil images")
+    # Oil patch bank — строим на каждом GPU независимо (данные в CPU памяти)
+    log("Building oil patch bank for copy-paste augmentation...")
+    oil_train_entries = [e for e in train_entries if e["class_name"] == "oil"]
+    oil_patch_bank = build_oil_patch_bank(
+        oil_train_entries, normalizer, max_images=100, patches_per_image=5)
+    n_patches = len(oil_patch_bank["vv"]) if oil_patch_bank else 0
+    log(f"  Patch bank: {n_patches} patches from oil images")
 
     augmenter = SARAugmenter(
         speckle_prob=0.5, speckle_looks=4,
@@ -395,8 +392,8 @@ def main():
             num_replicas=world_size,
             rank=rank,
         )
-        val_sampler = DistributedSampler(val_ds, num_replicas=world_size,
-                                         rank=rank, shuffle=False)
+        # Валидация только на rank 0 (полный val set, без шардирования)
+        val_sampler = None
     else:
         train_sampler = ClassBalancedSampler(
             train_entries, cfg.train.lookalike_oversample, cfg.seed)
@@ -405,12 +402,13 @@ def main():
     train_loader = DataLoader(
         train_ds, batch_size=cfg.data.batch_size, sampler=train_sampler,
         num_workers=cfg.data.num_workers, pin_memory=cfg.data.pin_memory,
-        drop_last=True, persistent_workers=cfg.data.num_workers > 0,
+        drop_last=True,
+        persistent_workers=(cfg.data.num_workers > 0),
     )
     val_loader = DataLoader(
         val_ds, batch_size=1, sampler=val_sampler, shuffle=False,
         num_workers=cfg.data.num_workers, pin_memory=cfg.data.pin_memory,
-        persistent_workers=cfg.data.num_workers > 0,
+        persistent_workers=(cfg.data.num_workers > 0),
     )
 
     # ── Model ──
@@ -473,8 +471,7 @@ def main():
     for epoch in range(start_epoch, cfg.train.epochs):
         t0 = time.time()
 
-        if use_ddp:
-            train_sampler.set_epoch(epoch)
+        train_sampler.set_epoch(epoch)
 
         train_losses = train_one_epoch(
             model, train_loader, criterion, optimizer, scaler,
