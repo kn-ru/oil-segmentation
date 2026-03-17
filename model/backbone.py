@@ -71,24 +71,19 @@ class ConvNeXtBackbone(nn.Module):
         else:
             self.stem_adapter = nn.Identity()
 
-        # Извлекаем stages (без stem)
-        # timm ConvNeXt features_only: stem_0, stages_1..3
-        # Нам нужны stages без patchify stem
+        # Извлекаем stages (без stem), удаляем timm model чтобы
+        # оригинальный stem не оставался как unused parameter
         self._extract_stages()
+        del self.model  # убираем ссылку на timm model (stem живёт в ней)
 
     def _extract_stages(self):
         """Извлечь stages из timm модели."""
-        # timm ConvNeXt features_only имеет:
-        # model.stem (patchify), model.stages[0..3]
-        # В features_only mode: feature_info дает indices
         children = list(self.model.children())
-        # Обычно: stem, stage0, stage1, stage2, stage3
-        # Для ConvNeXt: stem + 4 stages
         self.stages = nn.ModuleList()
         # Пропускаем stem (index 0), берём остальные stage
         for i, child in enumerate(children):
             if i == 0:
-                continue  # skip stem
+                continue
             self.stages.append(child)
 
     def forward(self, x: torch.Tensor) -> list:
