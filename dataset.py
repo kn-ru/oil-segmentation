@@ -320,7 +320,7 @@ class SARAugmenter:
             # Найти патч с нефтью в источнике
             patch_found = False
             src_h, src_w = src_vv.shape
-            actual_max_sz = min(max_sz, src_h, src_w, H, W)
+            actual_max_sz = min(max_sz, src_h - 1, src_w - 1, H - 1, W - 1)
             if actual_max_sz < min_sz:
                 continue
             for _ in range(20):
