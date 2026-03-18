@@ -105,8 +105,9 @@ class TileDataset(Dataset):
         vh_tile  = vh[y:y + ts, x:x + ts]
         mask_tile = mask[y:y + ts, x:x + ts]
 
-        # VV + VH → 2 канала
-        image = np.stack([vv_tile, vh_tile], axis=0)  # (2, H, W)
+        # VV + VH → 2 канала (contiguous для DataLoader)
+        image = np.ascontiguousarray(np.stack([vv_tile, vh_tile], axis=0))
+        mask_tile = np.ascontiguousarray(mask_tile)
 
         return {
             "image": torch.from_numpy(image),
