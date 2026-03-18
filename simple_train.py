@@ -236,7 +236,7 @@ def main():
     model = SimpleOilNet(
         backbone=cfg.backbone,
         pretrained=cfg.pretrained,
-        decoder_channels=tuple(cfg.decoder_channels),
+        fpn_channels=cfg.decoder_channels[0],
         num_classes=cfg.num_classes,
     ).to(device)
 
