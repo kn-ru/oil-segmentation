@@ -190,16 +190,23 @@ def train_one_epoch(
         if is_sync_step:
             if cfg.train.use_amp:
                 scaler.unscale_(optimizer)
-                nn.utils.clip_grad_norm_(model.parameters(), cfg.train.grad_clip)
-                scaler.step(optimizer)
+                # Проверка на NaN/Inf в градиентах
+                grad_norm = nn.utils.clip_grad_norm_(model.parameters(), cfg.train.grad_clip)
+                if torch.isfinite(grad_norm):
+                    scaler.step(optimizer)
+                else:
+                    if rank == 0:
+                        logger.warning(f"Epoch {epoch} batch {batch_idx}: "
+                                       f"NaN/Inf grad detected, skipping step")
                 scaler.update()
             else:
-                nn.utils.clip_grad_norm_(model.parameters(), cfg.train.grad_clip)
-                optimizer.step()
+                grad_norm = nn.utils.clip_grad_norm_(model.parameters(), cfg.train.grad_clip)
+                if torch.isfinite(grad_norm):
+                    optimizer.step()
 
             optimizer.zero_grad()
-            # EMA только на rank 0 (веса синхронизированы через DDP)
-            if rank == 0:
+            # EMA только на rank 0 и только если шаг был валидным
+            if rank == 0 and torch.isfinite(grad_norm):
                 ema.update(model.module if is_ddp else model)
 
         for k in running:
@@ -445,12 +452,12 @@ def main():
     ).to(device)
 
     # ── Optimizer, Scheduler ──
-    # LR масштабируется линейно с world_size
-    scaled_lr = cfg.train.lr * world_size
+    # LR НЕ масштабируем: effective batch = bs * grad_accum * world_size
+    # При DDP с grad_accum пользователь уже контролирует eff batch через --grad-accum
     optimizer = torch.optim.AdamW(
-        model.parameters(), lr=scaled_lr, weight_decay=cfg.train.weight_decay)
+        model.parameters(), lr=cfg.train.lr, weight_decay=cfg.train.weight_decay)
     scheduler = cosine_scheduler(
-        optimizer, scaled_lr, cfg.train.warmup_epochs, cfg.train.epochs)
+        optimizer, cfg.train.lr, cfg.train.warmup_epochs, cfg.train.epochs)
 
     scaler = GradScaler("cuda", enabled=cfg.train.use_amp)
     ema = EMA(raw_model, cfg.train.ema_decay) if rank == 0 else None
@@ -505,7 +512,7 @@ def main():
                 f"nooil={val_metrics['fp_area_no_oil']:.6f}")
 
             score = val_metrics["macro_f1"] + val_metrics["oil_dice"]
-            if score > best_metric:
+            if score > best_metric and not (val_metrics["loss_total"] != val_metrics["loss_total"]):
                 best_metric = score
                 save_checkpoint(
                     os.path.join(cfg.train.save_dir, "best.pt"),
