@@ -105,13 +105,12 @@ class TileDataset(Dataset):
         vh_tile  = vh[y:y + ts, x:x + ts]
         mask_tile = mask[y:y + ts, x:x + ts]
 
-        # VV + VH → 2 канала (contiguous для DataLoader)
-        image = np.ascontiguousarray(np.stack([vv_tile, vh_tile], axis=0))
-        mask_tile = np.ascontiguousarray(mask_tile)
+        # VV + VH → 2 канала. torch.tensor() копирует данные (нет shared memory)
+        image = np.stack([vv_tile, vh_tile], axis=0).copy()
 
         return {
-            "image": torch.from_numpy(image),
-            "mask":  torch.from_numpy(mask_tile),
+            "image": torch.tensor(image,     dtype=torch.float32),
+            "mask":  torch.tensor(mask_tile, dtype=torch.float32),
             "label": entry["class_idx"],
             "filename": entry["filename"],
         }
