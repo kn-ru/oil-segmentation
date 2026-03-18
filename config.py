@@ -75,7 +75,7 @@ class TrainConfig:
     warmup_epochs: int = 5
 
     # Optimizer
-    lr: float = 3e-4
+    lr: float = 1e-4
     weight_decay: float = 0.05
     grad_clip: float = 1.0
 

@@ -238,6 +238,10 @@ class SARAugmenter:
             vv, vh, mask = self._copy_paste(vv, vh, mask,
                                              oil_vv_bank, oil_vh_bank, oil_mask_bank)
 
+        # Clamp после всех аугментаций — предотвращает fp16 overflow
+        vv = np.clip(vv, -10.0, 10.0).astype(np.float32)
+        vh = np.clip(vh, -10.0, 10.0).astype(np.float32)
+
         return vv, vh, mask
 
     # ── Геометрия ──────────────────────────────────────────────────────

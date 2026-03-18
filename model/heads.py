@@ -72,7 +72,7 @@ class SegmentationHead(nn.Module):
 # ──────────────────── Generalized Mean Pooling ─────────────────────────
 
 class GeM(nn.Module):
-    """Generalized Mean Pooling."""
+    """Generalized Mean Pooling (fp16-safe)."""
 
     def __init__(self, p: float = 3.0, eps: float = 1e-6):
         super().__init__()
@@ -80,9 +80,12 @@ class GeM(nn.Module):
         self.eps = eps
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return F.adaptive_avg_pool2d(
-            x.clamp(min=self.eps).pow(self.p), 1
-        ).pow(1.0 / self.p).squeeze(-1).squeeze(-1)
+        # Clamp p to safe range to prevent pow() overflow in fp16
+        p = self.p.clamp(min=1.0, max=6.0)
+        # Compute in fp32 to avoid fp16 overflow
+        x_fp32 = x.float().clamp(min=self.eps)
+        pooled = F.adaptive_avg_pool2d(x_fp32.pow(p), 1).pow(1.0 / p)
+        return pooled.squeeze(-1).squeeze(-1).to(x.dtype)
 
 
 # ──────────────────── Tile Embedding ───────────────────────────────────
