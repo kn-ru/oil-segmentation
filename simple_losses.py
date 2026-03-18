@@ -59,8 +59,12 @@ class LovaszLoss(nn.Module):
         if logits.dim() == 4:
             logits = logits.squeeze(1)
 
+        # Compute in float32 for numerical stability (AMP может дать float16)
+        logits = logits.float()
+        targets = targets.float()
+
         B = logits.shape[0]
-        loss = torch.tensor(0.0, device=logits.device, dtype=logits.dtype)
+        loss = torch.tensor(0.0, device=logits.device, dtype=torch.float32)
 
         for i in range(B):
             flat_log = logits[i].reshape(-1)

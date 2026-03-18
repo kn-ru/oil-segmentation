@@ -137,6 +137,7 @@ class ClassBalancedTileSampler(Sampler):
     def __init__(self, dataset: TileDataset, lookalike_oversample: float = 1.5,
                  seed: int = 42):
         self.dataset = dataset
+        self._base_seed = seed
         self.seed = seed
 
         # Группировать тайлы по классу изображения
@@ -170,4 +171,4 @@ class ClassBalancedTileSampler(Sampler):
         return self.total
 
     def set_epoch(self, epoch: int):
-        self.seed += epoch
+        self.seed = self._base_seed + epoch

@@ -224,12 +224,10 @@ def main():
     train_loader = DataLoader(
         train_ds, batch_size=cfg.batch_size, sampler=train_sampler,
         num_workers=cfg.num_workers, pin_memory=False, drop_last=True,
-        persistent_workers=(cfg.num_workers > 0),
     )
     val_loader = DataLoader(
         val_ds, batch_size=4, sampler=val_sampler, shuffle=False,
         num_workers=cfg.num_workers, pin_memory=False,
-        persistent_workers=(cfg.num_workers > 0),
     )
 
     # ── Model ──
