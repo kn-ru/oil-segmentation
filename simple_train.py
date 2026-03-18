@@ -224,13 +224,17 @@ def main():
         train_sampler = ClassBalancedTileSampler(train_ds, cfg.lookalike_oversample, cfg.seed)
         val_sampler   = None
 
+    # multiprocessing_context='spawn' — rasterio/GDAL не fork-safe
+    mp_ctx = 'spawn' if cfg.num_workers > 0 else None
     train_loader = DataLoader(
         train_ds, batch_size=cfg.batch_size, sampler=train_sampler,
         num_workers=cfg.num_workers, pin_memory=False, drop_last=True,
+        multiprocessing_context=mp_ctx,
     )
     val_loader = DataLoader(
         val_ds, batch_size=4, sampler=val_sampler, shuffle=False,
         num_workers=cfg.num_workers, pin_memory=False,
+        multiprocessing_context=mp_ctx,
     )
 
     # ── Model ──
