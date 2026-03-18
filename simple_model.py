@@ -47,8 +47,8 @@ class FPNDecoder(nn.Module):
         # Lateral projections
         laterals = [lat(f) for lat, f in zip(self.laterals, features)]
 
-        # Top-down: начинаем с самого глубокого
-        x = laterals[-1]  # C3 @ 16×16
+        # Top-down: начинаем с самого глубокого, применяем refine сразу
+        x = self.refines[-1](laterals[-1])  # C3 @ 16×16
         for i in range(len(laterals) - 2, -1, -1):
             x = F.interpolate(x, size=laterals[i].shape[-2:],
                               mode="bilinear", align_corners=False)
