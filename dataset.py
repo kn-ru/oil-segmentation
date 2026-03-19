@@ -420,6 +420,20 @@ class OilSpillBagDataset(Dataset):
         with rasterio.open(entry["mask_path"]) as src:
             mask = src.read(1).astype(np.float32)
 
+        # Гарантировать 2048×2048 (некоторые файлы отличаются на ±1..200px)
+        target = (self.tile_size * 4)  # 512*4=2048
+        h, w = vv.shape
+        if h != target or w != target:
+            vv   = vv[:target, :target]
+            vh   = vh[:target, :target]
+            mask = mask[:target, :target]
+            h, w = vv.shape
+            if h < target or w < target:
+                pad_h, pad_w = target - h, target - w
+                vv   = np.pad(vv,   ((0, pad_h), (0, pad_w)), mode='reflect')
+                vh   = np.pad(vh,   ((0, pad_h), (0, pad_w)), mode='reflect')
+                mask = np.pad(mask, ((0, pad_h), (0, pad_w)), mode='constant')
+
         # Нормализация
         vv, vh = self.normalizer.transform(vv, vh)
 

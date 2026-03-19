@@ -24,6 +24,25 @@ from dataset import (
 )
 
 
+def _ensure_size(vv, vh, mask, target=2048):
+    """Pad/crop изображение к target×target."""
+    h, w = vv.shape
+    if h == target and w == target:
+        return vv, vh, mask
+    # Crop если больше
+    vv   = vv[:target, :target]
+    vh   = vh[:target, :target]
+    mask = mask[:target, :target]
+    # Pad если меньше
+    h, w = vv.shape
+    if h < target or w < target:
+        pad_h, pad_w = target - h, target - w
+        vv   = np.pad(vv,   ((0, pad_h), (0, pad_w)), mode='reflect')
+        vh   = np.pad(vh,   ((0, pad_h), (0, pad_w)), mode='reflect')
+        mask = np.pad(mask, ((0, pad_h), (0, pad_w)), mode='constant', constant_values=0)
+    return vv, vh, mask
+
+
 class TileDataset(Dataset):
     """
     Tile-level dataset: возвращает один тайл 512×512 за раз.
@@ -76,6 +95,9 @@ class TileDataset(Dataset):
             vh = src.read(2).astype(np.float32)
         with rasterio.open(entry["mask_path"]) as src:
             mask = src.read(1).astype(np.float32)
+
+        # Гарантировать размер 2048×2048 (некоторые файлы отличаются)
+        vv, vh, mask = _ensure_size(vv, vh, mask, 2048)
 
         vv, vh = self.normalizer.transform(vv, vh)
 
