@@ -51,5 +51,5 @@ class SimpleConfig:
     seed: int = 42
 
     # Dataloader
-    num_workers: int = 0
+    num_workers: int = 4
     pin_memory: bool = True

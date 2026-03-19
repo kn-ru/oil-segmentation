@@ -57,7 +57,7 @@ def cosine_scheduler(optimizer, base_lr: float, warmup_epochs: int,
 
     def lr_lambda(epoch):
         if epoch < warmup_epochs:
-            return epoch / max(1, warmup_epochs)
+            return max(0.01, epoch / max(1, warmup_epochs))  # min 1% LR
         progress = (epoch - warmup_epochs) / max(1, total_epochs - warmup_epochs)
         return max(min_lr / base_lr, 0.5 * (1 + math.cos(math.pi * progress)))
 
