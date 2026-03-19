@@ -320,7 +320,7 @@ class SARAugmenter:
             # Найти патч с нефтью в источнике
             patch_found = False
             src_h, src_w = src_vv.shape
-            actual_max_sz = min(max_sz, src_h, src_w, H, W)
+            actual_max_sz = min(max_sz, src_h - 1, src_w - 1, H - 1, W - 1)
             if actual_max_sz < min_sz:
                 continue
             for _ in range(20):
@@ -419,6 +419,20 @@ class OilSpillBagDataset(Dataset):
             vh = src.read(2).astype(np.float32)
         with rasterio.open(entry["mask_path"]) as src:
             mask = src.read(1).astype(np.float32)
+
+        # Гарантировать 2048×2048 (некоторые файлы отличаются на ±1..200px)
+        target = (self.tile_size * 4)  # 512*4=2048
+        h, w = vv.shape
+        if h != target or w != target:
+            vv   = vv[:target, :target]
+            vh   = vh[:target, :target]
+            mask = mask[:target, :target]
+            h, w = vv.shape
+            if h < target or w < target:
+                pad_h, pad_w = target - h, target - w
+                vv   = np.pad(vv,   ((0, pad_h), (0, pad_w)), mode='reflect')
+                vh   = np.pad(vh,   ((0, pad_h), (0, pad_w)), mode='reflect')
+                mask = np.pad(mask, ((0, pad_h), (0, pad_w)), mode='constant')
 
         # Нормализация
         vv, vh = self.normalizer.transform(vv, vh)
