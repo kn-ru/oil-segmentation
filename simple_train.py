@@ -47,6 +47,7 @@ def parse_args():
     p.add_argument("--no-amp",     action="store_true")
     p.add_argument("--resume",     type=str,   default=None)
     p.add_argument("--grad-accum", type=int,   default=None)
+    p.add_argument("--data-dir",   type=str,   default=None)
     return p.parse_args()
 
 
@@ -162,6 +163,7 @@ def main():
     if args.lr:         cfg.lr = args.lr
     if args.no_amp:     cfg.use_amp = False
     if args.grad_accum: cfg.grad_accum_steps = args.grad_accum
+    if args.data_dir:   cfg.data_dir = args.data_dir
 
     use_ddp_flag = is_ddp()
     if use_ddp_flag:
